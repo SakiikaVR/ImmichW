@@ -26,10 +26,12 @@
 
 **[📦 最新リリースはこちら (Releases)](https://github.com/SakiikaVR/ImmichW/releases/latest)** — `ImmichW-win-x64.zip` を解凍して `ImmichLauncher.exe` を実行してください。
 
-> サーバー本体 (Immich v3.0.3) のネイティブ構築手順は **[docs/SETUP.md](docs/SETUP.md)** を参照してください。
-> PostgreSQL / pgvector / Redis / ffmpeg をすべて管理者権限不要のポータブル構成で
-> `%LOCALAPPDATA%\ImmichNative` に配置し、ランチャーから起動・停止・アカウント設定・
-> 保存先ドライブ変更・外出先アクセス (Tailscale) まで GUI で操作できます。
+> **初回インストールはボタン一つ。** 起動すると表示される「⬇ 自動セットアップを実行」を押すだけで、
+> PostgreSQL / pgvector(同梱) / Redis / ffmpeg / Immich v3.0.3(ソースから自動ビルド) を
+> `%LOCALAPPDATA%\ImmichNative` に管理者権限不要のポータブル構成で配置します
+> (約1GBのダウンロード + 10〜30分のビルド。Node.js が無い場合は自動でインストールします)。
+> 完了後は起動・停止・アカウント設定・保存先ドライブ変更・外出先アクセス (Tailscale) まで
+> すべて GUI で操作できます。手動での構築手順は [docs/SETUP.md](docs/SETUP.md) を参照。
 
 ## ✨ 特徴
 

@@ -81,6 +81,20 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void OnAutoSetup(object sender, RoutedEventArgs e)
+    {
+        AutoSetupButton.IsEnabled = false;
+        await RunExclusiveAsync(async () =>
+        {
+            var ok = await Task.Run(() => _stack.SetupStackAsync(m => DispatcherQueue.TryEnqueue(() => Log(m))));
+            if (!ok)
+            {
+                Log("セットアップは完了していません。ログを確認し、もう一度実行してください(続きから再開されます)。");
+            }
+        });
+        AutoSetupButton.IsEnabled = true;
+    }
+
     private async void OnStart(object sender, RoutedEventArgs e)
     {
         await RunExclusiveAsync(async () =>

@@ -43,9 +43,14 @@
             x:Name="SetupBar"
             Grid.Row="2"
             IsOpen="False"
+            IsClosable="False"
             Severity="Warning"
-            Title="ネイティブスタックが見つかりません"
-            Message="セットアップスクリプト (setup-native.ps1) を実行して PostgreSQL / Garnet / Immich を配置してください。" />
+            Title="初回インストールが必要です"
+            Message="下のボタンを押すと、PostgreSQL / Redis / ffmpeg / Immich(ソースからビルド) を自動でダウンロード・構築します。合計約1GBのダウンロードと10〜30分のビルドが必要です。">
+            <InfoBar.ActionButton>
+                <Button x:Name="AutoSetupButton" Content="⬇ 自動セットアップを実行" Click="OnAutoSetup" />
+            </InfoBar.ActionButton>
+        </InfoBar>
 
         <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
             <Button x:Name="StartButton" Style="{StaticResource AccentButtonStyle}" Click="OnStart">
