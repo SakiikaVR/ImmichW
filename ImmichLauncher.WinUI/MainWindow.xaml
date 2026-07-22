@@ -46,7 +46,7 @@
             IsClosable="False"
             Severity="Warning"
             Title="初回インストールが必要です"
-            Message="下のボタンを押すと、PostgreSQL / Redis / ffmpeg / Immich(ソースからビルド) を自動でダウンロード・構築します。合計約1GBのダウンロードと10〜30分のビルドが必要です。">
+            Message="下のボタンを押すと、必要なもの一式 (PostgreSQL / Redis / ffmpeg / Immich ビルド済み一式・約400MB) をダウンロードして展開します。ビルドは不要で、数分で完了します。">
             <InfoBar.ActionButton>
                 <Button x:Name="AutoSetupButton" Content="⬇ 自動セットアップを実行" Click="OnAutoSetup" />
             </InfoBar.ActionButton>

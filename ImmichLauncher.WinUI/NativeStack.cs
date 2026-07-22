@@ -30,7 +30,17 @@ public sealed class NativeStack
     public static string PgDataDir => Path.Combine(Root, "pgdata");
     public static string RedisDir => Path.Combine(Root, "redis");
     public static string FfmpegBinDir => Path.Combine(Root, "ffmpeg", "bin");
-    public static string ServerDir => Path.Combine(Root, "immich-src", "server");
+    /// バンドル配置 (Root\server) を優先し、無ければソースビルド構成 (immich-src\server) を使う
+    public static string ServerDir
+    {
+        get
+        {
+            var bundled = Path.Combine(Root, "server");
+            return File.Exists(Path.Combine(bundled, "dist", "main.js"))
+                ? bundled
+                : Path.Combine(Root, "immich-src", "server");
+        }
+    }
     public static string BuildDataDir => Path.Combine(Root, "build");
     public static string LogDir => Path.Combine(Root, "logs");
     private static string ConfigPath => Path.Combine(Root, "launcher-config.json");
@@ -170,7 +180,7 @@ public sealed class NativeStack
         if (!await PortOpenAsync(2283))
         {
             log("Immich サーバーを起動しています(初回はマイグレーションに時間がかかります)…");
-            _immich = StartDaemon("node", "dist\\main.js", ServerDir,
+            _immich = StartDaemon(NodeExe, "dist\\main.js", ServerDir,
                 Path.Combine(LogDir, "immich.log"), ImmichEnv(cfg));
             if (!await WaitPortAsync(2283, 120)) { log("Immich の起動に失敗しました。logs\\immich.log を確認してください。"); return false; }
         }
@@ -423,20 +433,23 @@ public sealed class NativeStack
 
     // ---------- 初回自動セットアップ ----------
 
-    private const string PgZipUrl = "https://sbp.enterprisedb.com/getfile.jsp?fileid=1260307"; // PostgreSQL 17.10 x64 binaries
-    private const string RedisZipUrl =
-        "https://github.com/redis-windows/redis-windows/releases/download/8.8.0/Redis-8.8.0-Windows-x64-msys2.zip";
-    private const string FfmpegZipUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
-    private const string ImmichSrcZipUrl = "https://github.com/immich-app/immich/archive/refs/tags/v3.0.3.zip";
-    private const string ImmichSrcFolderName = "immich-3.0.3";
+    // すべて同梱済みのスタックバンドル (PostgreSQL+pgvector / Redis / ffmpeg / Node / ビルド済み Immich / 地理データ)
+    private const string StackBundleUrl =
+        "https://github.com/SakiikaVR/ImmichW/releases/latest/download/ImmichW-stack-win-x64.zip";
 
-    private static string NodeDir => @"C:\Program Files\nodejs";
-    private static string NpmGlobalDir =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm");
-    private static string SrcDir => Path.Combine(Root, "immich-src");
+    /// バンドル同梱の node.exe を優先し、無ければ PATH の node を使う
+    private static string NodeExe
+    {
+        get
+        {
+            var bundled = Path.Combine(Root, "node", "node.exe");
+            return File.Exists(bundled) ? bundled : "node";
+        }
+    }
 
     /// <summary>
-    /// 初回インストールをすべて自動で行う。何度でも再実行可能(完了済みの手順はスキップ)。
+    /// 初回インストール: スタックバンドル (すべて同梱) を 1 回ダウンロードして展開し、
+    /// データベースを初期化するだけ。何度でも再実行可能(完了済みの手順はスキップ)。
     /// </summary>
     public async Task<bool> SetupStackAsync(Action<string> log)
     {
@@ -446,147 +459,24 @@ public sealed class NativeStack
 
         try
         {
-            // 1. Node.js
-            if (!File.Exists(Path.Combine(NodeDir, "node.exe")) && !await ToolOkAsync("node --version"))
+            // 1. スタックバンドルの取得と展開
+            if (!File.Exists(Path.Combine(ServerDir, "dist", "main.js")) ||
+                !File.Exists(Path.Combine(PgDir, "bin", "pg_ctl.exe")))
             {
-                log("[1/9] Node.js をインストールしています (UAC ダイアログが出たら許可してください)…");
-                await RunLoggedAsync("winget",
-                    "install -e --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements",
-                    null, log);
-                if (!File.Exists(Path.Combine(NodeDir, "node.exe")))
-                {
-                    log("Node.js のインストールを確認できませんでした。https://nodejs.org/ から LTS 版を入れて再実行してください。");
-                    return false;
-                }
-            }
-            log("[1/9] Node.js: OK");
-
-            // 2. PostgreSQL (ポータブル)
-            if (!File.Exists(Path.Combine(PgDir, "bin", "pg_ctl.exe")))
-            {
-                log("[2/9] PostgreSQL 17 をダウンロードしています (約320MB)…");
-                var zip = Path.Combine(Root, "pg17.zip");
-                await DownloadAsync(PgZipUrl, zip, log);
-                log("展開中…");
-                System.IO.Compression.ZipFile.ExtractToDirectory(zip, Root, overwriteFiles: true);
+                log("[1/2] スタックバンドルをダウンロードしています (約400MB)…");
+                var zip = Path.Combine(Root, "stack.zip");
+                await DownloadAsync(StackBundleUrl, zip, log);
+                log("展開しています (数分かかります)…");
+                await Task.Run(() =>
+                    System.IO.Compression.ZipFile.ExtractToDirectory(zip, Root, overwriteFiles: true));
                 File.Delete(zip);
             }
-            log("[2/9] PostgreSQL: OK");
+            log("[1/2] スタック (PostgreSQL / pgvector / Redis / ffmpeg / Node / Immich / 地理データ): OK");
 
-            // 3. pgvector (同梱のビルド済みバイナリを配置)
-            var bundled = Path.Combine(AppContext.BaseDirectory, "Assets", "pgvector");
-            if (Directory.Exists(bundled))
-            {
-                CopyTree(Path.Combine(bundled, "lib"), Path.Combine(PgDir, "lib"));
-                CopyTree(Path.Combine(bundled, "share"), Path.Combine(PgDir, "share"));
-                log("[3/9] pgvector: OK (同梱バイナリを配置)");
-            }
-            else if (!File.Exists(Path.Combine(PgDir, "lib", "vector.dll")))
-            {
-                log("[3/9] pgvector の同梱ファイルが見つかりません。配布 ZIP を丸ごと展開して実行してください。");
-                return false;
-            }
-
-            // 4. Redis
-            if (!File.Exists(Path.Combine(RedisDir, "redis-server.exe")))
-            {
-                log("[4/9] Redis (redis-windows) をダウンロードしています (約40MB)…");
-                var zip = Path.Combine(Root, "redis.zip");
-                await DownloadAsync(RedisZipUrl, zip, log);
-                var tmp = Path.Combine(Root, "redis-tmp");
-                System.IO.Compression.ZipFile.ExtractToDirectory(zip, tmp, overwriteFiles: true);
-                var inner = Directory.GetDirectories(tmp).FirstOrDefault() ?? tmp;
-                Directory.Move(inner, RedisDir);
-                try { Directory.Delete(tmp, recursive: true); } catch { /* 空でなければ残す */ }
-                File.Delete(zip);
-            }
-            log("[4/9] Redis: OK");
-
-            // 5. ffmpeg
-            if (!File.Exists(Path.Combine(FfmpegBinDir, "ffmpeg.exe")))
-            {
-                log("[5/9] ffmpeg をダウンロードしています (約100MB)…");
-                var zip = Path.Combine(Root, "ffmpeg.zip");
-                await DownloadAsync(FfmpegZipUrl, zip, log);
-                var tmp = Path.Combine(Root, "ffmpeg-tmp");
-                System.IO.Compression.ZipFile.ExtractToDirectory(zip, tmp, overwriteFiles: true);
-                var inner = Directory.GetDirectories(tmp).FirstOrDefault();
-                if (inner != null)
-                {
-                    Directory.CreateDirectory(Path.Combine(Root, "ffmpeg"));
-                    if (Directory.Exists(FfmpegBinDir)) Directory.Delete(FfmpegBinDir, recursive: true);
-                    Directory.Move(Path.Combine(inner, "bin"), FfmpegBinDir);
-                }
-                try { Directory.Delete(tmp, recursive: true); } catch { /* 残っても害なし */ }
-                File.Delete(zip);
-            }
-            log("[5/9] ffmpeg: OK");
-
-            // 6. Immich ソース取得 + Windows パッチ
-            if (!File.Exists(Path.Combine(SrcDir, "package.json")))
-            {
-                log("[6/9] Immich v3.0.3 のソースをダウンロードしています…");
-                var zip = Path.Combine(Root, "immich-src.zip");
-                await DownloadAsync(ImmichSrcZipUrl, zip, log);
-                log("展開中 (数分かかります)…");
-                System.IO.Compression.ZipFile.ExtractToDirectory(zip, Root, overwriteFiles: true);
-                Directory.Move(Path.Combine(Root, ImmichSrcFolderName), SrcDir);
-                File.Delete(zip);
-            }
-            ApplyWindowsPatch(log);
-            log("[6/9] Immich ソース: OK");
-
-            // 7. ビルド (初回は 10〜20 分かかります)
-            if (!File.Exists(Path.Combine(ServerDir, "dist", "main.js")))
-            {
-                log("[7/9] 依存関係をインストールしています (数分)…");
-                if (!await RunLoggedAsync("cmd.exe", "/c npm i -g pnpm@11.6.0", null, log)) return false;
-                if (!await RunLoggedAsync("cmd.exe", "/c pnpm install --frozen-lockfile", SrcDir, log,
-                        quiet: true)) return false;
-                log("[7/9] サーバーと Web UI をビルドしています (10〜20分)…");
-                foreach (var filter in new[] { "@immich/sdk", "@immich/plugin-sdk", "immich", "immich-web" })
-                {
-                    log($"  build: {filter}");
-                    if (!await RunLoggedAsync("cmd.exe", $"/c pnpm --filter {filter} build", SrcDir, log,
-                            quiet: true))
-                    {
-                        return false;
-                    }
-                }
-            }
-            var www = Path.Combine(BuildDataDir, "www");
-            if (!File.Exists(Path.Combine(www, "index.html")))
-            {
-                CopyTree(Path.Combine(SrcDir, "web", "build"), www);
-            }
-            log("[7/9] ビルド: OK");
-
-            // 8. 地理データ (逆ジオコーディング用)
-            var geo = Path.Combine(BuildDataDir, "geodata");
-            if (!File.Exists(Path.Combine(geo, "cities500.txt")))
-            {
-                log("[8/9] 地理データをダウンロードしています…");
-                Directory.CreateDirectory(geo);
-                var cityZip = Path.Combine(geo, "cities500.zip");
-                await DownloadAsync("https://download.geonames.org/export/dump/cities500.zip", cityZip, log);
-                System.IO.Compression.ZipFile.ExtractToDirectory(cityZip, geo, overwriteFiles: true);
-                File.Delete(cityZip);
-                await DownloadAsync("https://download.geonames.org/export/dump/admin1CodesASCII.txt",
-                    Path.Combine(geo, "admin1CodesASCII.txt"), log);
-                await DownloadAsync("https://download.geonames.org/export/dump/admin2Codes.txt",
-                    Path.Combine(geo, "admin2Codes.txt"), log);
-                await DownloadAsync(
-                    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_admin_0_countries.geojson",
-                    Path.Combine(geo, "ne_10m_admin_0_countries.geojson"), log);
-                await File.WriteAllTextAsync(Path.Combine(geo, "geodata-date.txt"),
-                    DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss+00:00"));
-            }
-            log("[8/9] 地理データ: OK");
-
-            // 9. データベース初期化
+            // 2. データベース初期化
             if (!Directory.Exists(PgDataDir))
             {
-                log("[9/9] データベースを初期化しています…");
+                log("[2/2] データベースを初期化しています…");
                 var pwFile = Path.Combine(Root, "pgpw.tmp");
                 await File.WriteAllTextAsync(pwFile, cfg.DbPassword, new UTF8Encoding(false));
                 var ok = await RunLoggedAsync(Path.Combine(PgDir, "bin", "initdb.exe"),
@@ -614,7 +504,7 @@ public sealed class NativeStack
                     "-h 127.0.0.1 -U immich -d immich -c \"CREATE EXTENSION IF NOT EXISTS vector\"",
                     null, log, env);
             }
-            log("[9/9] データベース: OK");
+            log("[2/2] データベース: OK");
 
             log("🎉 セットアップが完了しました。「起動」を押してください。");
             return true;
@@ -623,42 +513,6 @@ public sealed class NativeStack
         {
             log($"セットアップ中にエラーが発生しました: {ex.Message}");
             log("もう一度「自動セットアップ」を押すと、完了済みの手順をスキップして続きから再開します。");
-            return false;
-        }
-    }
-
-    private static void ApplyWindowsPatch(Action<string> log)
-    {
-        // Windows のドライブパスを絶対パスとして許可する 1 行パッチ
-        var dto = Path.Combine(SrcDir, "server", "src", "dtos", "env.dto.ts");
-        if (!File.Exists(dto)) return;
-        var text = File.ReadAllText(dto);
-        const string original = @"z.string().regex(/^\//, 'Must be an absolute path')";
-        const string patched = @"z.string().regex(/^(?:\/|[A-Za-z]:[\\/])/, 'Must be an absolute path')";
-        if (text.Contains(original))
-        {
-            File.WriteAllText(dto, text.Replace(original, patched));
-            log("Windows 用パッチを適用しました (env.dto.ts)");
-        }
-    }
-
-    private static async Task<bool> ToolOkAsync(string commandLine)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo("cmd.exe", "/c " + commandLine)
-            {
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            using var p = Process.Start(psi)!;
-            await p.WaitForExitAsync();
-            return p.ExitCode == 0;
-        }
-        catch
-        {
             return false;
         }
     }
@@ -691,20 +545,6 @@ public sealed class NativeStack
         }
     }
 
-    private static void CopyTree(string source, string dest)
-    {
-        if (!Directory.Exists(source)) return;
-        Directory.CreateDirectory(dest);
-        foreach (var dir in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
-        {
-            Directory.CreateDirectory(dir.Replace(source, dest));
-        }
-        foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
-        {
-            File.Copy(file, file.Replace(source, dest), overwrite: true);
-        }
-    }
-
     /// コマンドを実行し出力をログへ流す。quiet: true なら末尾のエラー行のみログに出す
     private static async Task<bool> RunLoggedAsync(string file, string args, string? cwd, Action<string> log,
         Dictionary<string, string>? env = null, bool quiet = false)
@@ -719,7 +559,8 @@ public sealed class NativeStack
             StandardErrorEncoding = Encoding.UTF8,
         };
         if (cwd != null) psi.WorkingDirectory = cwd;
-        psi.Environment["PATH"] = NodeDir + ";" + NpmGlobalDir + ";" + Environment.GetEnvironmentVariable("PATH");
+        psi.Environment["PATH"] =
+            Path.Combine(Root, "node") + ";" + Environment.GetEnvironmentVariable("PATH");
         psi.Environment["CI"] = "1";
         if (env != null)
         {
@@ -759,7 +600,7 @@ public sealed class NativeStack
     private static async Task<string> RunCliAsync(string command, string stdinText, Action<string> log)
     {
         var cfg = LoadConfig();
-        var psi = new ProcessStartInfo("node", $"dist\\main.js immich-admin {command}")
+        var psi = new ProcessStartInfo(NodeExe, $"dist\\main.js immich-admin {command}")
         {
             WorkingDirectory = ServerDir,
             CreateNoWindow = true,
