@@ -460,7 +460,16 @@ public sealed class NativeStack
         try
         {
             // 1. スタックバンドルの取得と展開
+            // node_modules が欠損した破損配置 (v0.3.0 のバンドル不具合など) は削除して再取得する
+            var bundledServer = Path.Combine(Root, "server");
+            if (File.Exists(Path.Combine(bundledServer, "dist", "main.js")) &&
+                !File.Exists(Path.Combine(bundledServer, "node_modules", "kysely", "package.json")))
+            {
+                log("破損したサーバー配置を検出したため、削除して再取得します…");
+                Directory.Delete(bundledServer, recursive: true);
+            }
             if (!File.Exists(Path.Combine(ServerDir, "dist", "main.js")) ||
+                !File.Exists(Path.Combine(ServerDir, "node_modules", "kysely", "package.json")) ||
                 !File.Exists(Path.Combine(PgDir, "bin", "pg_ctl.exe")))
             {
                 log("[1/2] スタックバンドルをダウンロードしています (約400MB)…");
